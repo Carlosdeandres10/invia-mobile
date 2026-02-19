@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Invia Pipeline",
+    "slug": "invia-pipeline-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "scheme": "invia",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#106eea"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.invia.pipeline"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#106eea"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.invia.pipeline"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
+  }
+}
