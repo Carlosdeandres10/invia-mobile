@@ -8,13 +8,13 @@ interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   currentStreamText: string;
-  mode: 'pro' | 'rapido';
+  mode: 'pro' | 'rapido' | 'presentacion';
 
   addMessage: (msg: ChatMessage) => void;
   setStreaming: (streaming: boolean) => void;
   appendStreamText: (text: string) => void;
   finalizeStream: () => void;
-  setMode: (mode: 'pro' | 'rapido') => void;
+  setMode: (mode: 'pro' | 'rapido' | 'presentacion') => void;
   clearChat: () => void;
 }
 

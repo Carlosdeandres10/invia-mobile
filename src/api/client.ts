@@ -63,11 +63,23 @@ export interface DataExplorerResult {
   row_count: number;
 }
 
+export interface PresentationExportResult {
+  ok: boolean;
+  artifact?: {
+    id: string;
+    title: string;
+    created_at?: string;
+    files?: Record<string, { filename?: string; size?: number; url?: string; public_url?: string }>;
+    errors?: Record<string, string>;
+  };
+  error?: string;
+}
+
 // ------------------------------------------------------------------
 // Storage keys
 // ------------------------------------------------------------------
 const STORAGE_KEY_BASE_URL = '@invia_base_url';
-const DEFAULT_BASE_URL = 'http://192.168.1.100:5050';
+const DEFAULT_BASE_URL = 'https://hub.invia.es';
 
 // ------------------------------------------------------------------
 // Client class
@@ -148,7 +160,7 @@ class InviaApiClient {
 
   async login(username: string, password: string): Promise<LoginResponse> {
     const { data } = await this.client.post<LoginResponse>('/api/auth/login', {
-      user: username,
+      username,
       password,
     });
     return data;
@@ -187,14 +199,20 @@ class InviaApiClient {
     history: ChatMessage[] = []
   ): Promise<string> {
     const { data } = await this.client.post('/api/chat', {
-      message,
+      messages: [
+        ...history.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        { role: 'user', content: message },
+      ],
       mode,
-      history: history.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
+    }, {
+      headers: {
+        'X-Client': 'mobile',
+      },
     });
-    return data.response || data.content || '';
+    return data?.data?.content || data?.content || data?.response || '';
   }
 
   getChatStreamUrl(): string {
@@ -300,6 +318,23 @@ class InviaApiClient {
 
   async runPipeline(): Promise<Record<string, any>> {
     const { data } = await this.client.post('/api/pipeline/run');
+    return data;
+  }
+
+  async exportPresentation(
+    answer: string,
+    title: string = 'Presentación IA',
+    formats: string[] = ['html']
+  ): Promise<PresentationExportResult> {
+    const { data } = await this.client.post<PresentationExportResult>(
+      '/api/intelligence/presentation/export',
+      { answer, title, formats },
+      {
+        headers: {
+          'X-Client': 'mobile',
+        },
+      }
+    );
     return data;
   }
 }

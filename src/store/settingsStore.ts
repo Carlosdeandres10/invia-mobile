@@ -18,7 +18,7 @@ const STORAGE_SERVER = '@invia_base_url';
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   isDarkMode: false,
-  serverUrl: 'http://192.168.1.100:5050',
+  serverUrl: 'https://hub.invia.es',
 
   toggleTheme: () => {
     set((state) => {

@@ -43,8 +43,9 @@ function TabIcon({ emoji, focused, color }: { emoji: string; focused: boolean; c
 }
 
 // Main Tab Navigator
-function MainTabs() {
+function MainTabs({ role }: { role: string | null }) {
   const theme = useTheme();
+  const isAdmin = role === 'admin';
 
   return (
     <Tab.Navigator
@@ -78,17 +79,6 @@ function MainTabs() {
       }}
     >
       <Tab.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{
-          title: 'Panel',
-          headerTitle: 'Invia Pipeline',
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon emoji="📊" focused={focused} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
         name="Chat"
         component={ChatScreen}
         options={{
@@ -99,39 +89,58 @@ function MainTabs() {
           ),
         }}
       />
-      <Tab.Screen
-        name="Retail"
-        component={RetailExplorerScreen}
-        options={{
-          title: 'Retail',
-          headerTitle: 'Explorador Retail',
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon emoji="🛒" focused={focused} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Data"
-        component={DataExplorerScreen}
-        options={{
-          title: 'Data',
-          headerTitle: 'Data Explorer',
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon emoji="🗃️" focused={focused} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Config"
-        component={ConfigScreen}
-        options={{
-          title: 'Ajustes',
-          headerTitle: 'Configuración',
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon emoji="⚙️" focused={focused} color={color} />
-          ),
-        }}
-      />
+      {isAdmin && (
+        <Tab.Screen
+          name="Dashboard"
+          component={DashboardScreen}
+          options={{
+            title: 'Panel',
+            headerTitle: 'Invia Pipeline',
+            tabBarIcon: ({ focused, color }) => (
+              <TabIcon emoji="📊" focused={focused} color={color} />
+            ),
+          }}
+        />
+      )}
+      {isAdmin && (
+        <Tab.Screen
+          name="Retail"
+          component={RetailExplorerScreen}
+          options={{
+            title: 'Retail',
+            headerTitle: 'Explorador Retail',
+            tabBarIcon: ({ focused, color }) => (
+              <TabIcon emoji="🛒" focused={focused} color={color} />
+            ),
+          }}
+        />
+      )}
+      {isAdmin && (
+        <Tab.Screen
+          name="Data"
+          component={DataExplorerScreen}
+          options={{
+            title: 'Data',
+            headerTitle: 'Data Explorer',
+            tabBarIcon: ({ focused, color }) => (
+              <TabIcon emoji="🗃️" focused={focused} color={color} />
+            ),
+          }}
+        />
+      )}
+      {isAdmin && (
+        <Tab.Screen
+          name="Config"
+          component={ConfigScreen}
+          options={{
+            title: 'Ajustes',
+            headerTitle: 'Configuración',
+            tabBarIcon: ({ focused, color }) => (
+              <TabIcon emoji="⚙️" focused={focused} color={color} />
+            ),
+          }}
+        />
+      )}
     </Tab.Navigator>
   );
 }
@@ -139,9 +148,10 @@ function MainTabs() {
 // Root navigator with auth flow
 interface AppNavigationProps {
   isAuthenticated: boolean;
+  role: string | null;
 }
 
-export function AppNavigation({ isAuthenticated }: AppNavigationProps) {
+export function AppNavigation({ isAuthenticated, role }: AppNavigationProps) {
   const theme = useTheme();
 
   const navTheme = {
@@ -160,7 +170,9 @@ export function AppNavigation({ isAuthenticated }: AppNavigationProps) {
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {isAuthenticated ? (
-          <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen name="Main">
+            {() => <MainTabs role={role} />}
+          </Stack.Screen>
         ) : (
           <Stack.Screen
             name="Login"

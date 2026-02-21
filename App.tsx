@@ -17,7 +17,7 @@ import { apiClient } from './src/api/client';
 export default function App() {
   const [appReady, setAppReady] = useState(false);
 
-  const { isAuthenticated, isLoading: authLoading, checkAuth } = useAuthStore();
+  const { isAuthenticated, role, isLoading: authLoading, checkAuth } = useAuthStore();
   const { isDarkMode, loadSettings } = useSettingsStore();
 
   const theme = isDarkMode ? darkTheme : lightTheme;
@@ -64,7 +64,7 @@ export default function App() {
           barStyle={isDarkMode ? 'light-content' : 'dark-content'}
           backgroundColor={theme.colors.bgPrimary}
         />
-        <AppNavigation isAuthenticated={isAuthenticated} />
+        <AppNavigation isAuthenticated={isAuthenticated} role={role} />
       </ThemeContext.Provider>
     </SafeAreaProvider>
   );

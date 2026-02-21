@@ -12,10 +12,177 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
+  Linking,
 } from 'react-native';
 import { useTheme } from '../theme';
 import { useChatStore } from '../store/chatStore';
 import { apiClient, type ChatMessage } from '../api/client';
+
+interface ParsedMetric {
+  label: string;
+  value: number;
+}
+
+interface ParsedTable {
+  headers: string[];
+  rows: string[][];
+}
+
+interface ParsedKpi {
+  label: string;
+  value: number;
+}
+
+function wrapLongTokens(text: string, maxTokenLength: number = 48): string {
+  return text.replace(/\S{49,}/g, (token) => {
+    const chunks = token.match(new RegExp(`.{1,${maxTokenLength}}`, 'g'));
+    return chunks ? chunks.join('\n') : token;
+  });
+}
+
+function formatForMobile(content: string): string {
+  const withoutCodeFences = content
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ''))
+    .replace(/```/g, '');
+
+  const normalized = withoutCodeFences
+    .replace(/\r\n/g, '\n')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^[-*]\s+/gm, '• ')
+    .replace(/^[=]{3,}$/gm, '────────')
+    .replace(/^[-]{3,}$/gm, '────────')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+
+  return wrapLongTokens(normalized);
+}
+
+function parseMetrics(text: string): ParsedMetric[] {
+  const lines = text.split('\n');
+  const metrics: ParsedMetric[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const inline = line.match(/^([^:]{2,32}):\s*([0-9]+(?:[.,][0-9]+)?)\s*$/);
+    if (inline) {
+      metrics.push({
+        label: inline[1].trim(),
+        value: Number(inline[2].replace(',', '.')),
+      });
+      continue;
+    }
+
+    const labelOnly = line.match(/^([^:]{2,32}):\s*$/);
+    if (!labelOnly || i + 1 >= lines.length) continue;
+
+    const next = lines[i + 1].trim();
+    const nextNumber = next.match(/([0-9]+(?:[.,][0-9]+)?)\s*$/);
+    if (nextNumber) {
+      metrics.push({
+        label: labelOnly[1].trim(),
+        value: Number(nextNumber[1].replace(',', '.')),
+      });
+    }
+  }
+
+  const dedup = new Map<string, number>();
+  for (const item of metrics) {
+    if (!Number.isFinite(item.value)) continue;
+    if (!dedup.has(item.label)) dedup.set(item.label, item.value);
+  }
+  return Array.from(dedup.entries()).map(([label, value]) => ({ label, value }));
+}
+
+function parseNumber(value: string): number | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[€$,%\s]/g, '').replace(/\./g, '').replace(',', '.');
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+}
+
+function parseMarkdownTable(text: string): ParsedTable | null {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const start = lines.findIndex((line) => line.startsWith('|') && line.endsWith('|'));
+  if (start < 0 || start + 2 >= lines.length) return null;
+
+  const headerLine = lines[start];
+  const separatorLine = lines[start + 1];
+  if (!/^\|?\s*:?-{2,}/.test(separatorLine)) return null;
+
+  const headers = headerLine.split('|').map((c) => c.trim()).filter(Boolean);
+  const rows: string[][] = [];
+  for (let i = start + 2; i < lines.length; i += 1) {
+    const ln = lines[i];
+    if (!ln.startsWith('|')) break;
+    const cols = ln.split('|').map((c) => c.trim()).filter(Boolean);
+    if (cols.length) rows.push(cols);
+  }
+  if (!headers.length || !rows.length) return null;
+  return { headers, rows };
+}
+
+function buildKpisFromTable(table: ParsedTable): ParsedKpi[] {
+  const kpis: ParsedKpi[] = [];
+  for (let c = 0; c < table.headers.length; c += 1) {
+    const nums = table.rows.map((r) => parseNumber(r[c] || '')).filter((n): n is number => n !== null);
+    if (!nums.length) continue;
+    const total = nums.reduce((a, b) => a + b, 0);
+    kpis.push({ label: table.headers[c], value: total });
+  }
+  return kpis.slice(0, 3);
+}
+
+function buildSeriesFromTable(table: ParsedTable): ParsedMetric[] {
+  if (table.headers.length < 2) return [];
+  const labelIndex = 0;
+  const numericIndex = table.rows[0].findIndex((_, idx) => parseNumber(table.rows[0][idx] || '') !== null);
+  if (numericIndex < 0) return [];
+  return table.rows
+    .map((row) => ({
+      label: row[labelIndex] || 'N/D',
+      value: parseNumber(row[numericIndex] || '') || 0,
+    }))
+    .filter((x) => Number.isFinite(x.value))
+    .slice(0, 8);
+}
+
+function cleanChartArtifacts(text: string): string {
+  const boxCharsRegex = /[│┃┆┇┊┋║╎╏╵╷╹╻╽╿┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋─━│┃┄┅┈┉┌┐└┘]/g;
+  const barsRegex = /[█▇▆▅▄▃▂▁]+/g;
+
+  return text
+    .split('\n')
+    .map((line) => line.replace(boxCharsRegex, ' ').replace(barsRegex, ' '))
+    .map((line) => line.replace(/\s{2,}/g, ' ').trimEnd())
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (/^[=._\-:]{4,}$/.test(trimmed)) return false;
+      if (/^[|:]{3,}$/.test(trimmed)) return false;
+      if (/^[0-9.,\s%\-]+$/.test(trimmed) && trimmed.length < 8) return false;
+      return true;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractAssistantText(payload: any): string {
+  if (!payload) return '';
+  if (typeof payload === 'string') return payload;
+  if (typeof payload.content === 'string') return payload.content;
+  if (typeof payload.text === 'string') return payload.text;
+  if (typeof payload.response === 'string') return payload.response;
+  if (payload.data) {
+    const nested = extractAssistantText(payload.data);
+    if (nested) return nested;
+  }
+  return '';
+}
 
 export function ChatScreen() {
   const theme = useTheme();
@@ -33,6 +200,7 @@ export function ChatScreen() {
   } = useChatStore();
 
   const [input, setInput] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   // Scroll to bottom when messages change
@@ -48,9 +216,13 @@ export function ChatScreen() {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
+    const preparedQuestion = mode === 'presentacion'
+      ? `Genera una presentación ejecutiva clara para dirección.\n\n${trimmed}`
+      : trimmed;
+
     const userMsg: ChatMessage = {
       role: 'user',
-      content: trimmed,
+      content: preparedQuestion,
       timestamp: Date.now(),
     };
     addMessage(userMsg);
@@ -60,18 +232,27 @@ export function ChatScreen() {
     try {
       // SSE streaming via fetch
       const url = apiClient.getChatStreamUrl();
-      const body = JSON.stringify({
-        message: trimmed,
-        mode,
-        history: messages.slice(-10).map((m) => ({
+      const apiMessages = [
+        ...messages.slice(-10).map((m) => ({
           role: m.role,
           content: m.content,
         })),
+        {
+          role: 'user',
+          content: preparedQuestion,
+        },
+      ];
+      const body = JSON.stringify({
+        messages: apiMessages,
+        mode,
       });
 
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client': 'mobile',
+        },
         body,
       });
 
@@ -105,9 +286,11 @@ export function ChatScreen() {
                 }
                 try {
                   const parsed = JSON.parse(data);
-                  if (parsed.content || parsed.delta || parsed.text) {
-                    appendStreamText(parsed.content || parsed.delta || parsed.text);
-                  }
+                  const chunkText =
+                    extractAssistantText(parsed) ||
+                    parsed.delta ||
+                    '';
+                  if (chunkText) appendStreamText(chunkText);
                 } catch {
                   // If it's not JSON, it's plain text
                   if (data.trim()) {
@@ -121,7 +304,7 @@ export function ChatScreen() {
       } else {
         // JSON response (non-streaming fallback)
         const json = await response.json();
-        const content = json.response || json.content || JSON.stringify(json);
+        const content = extractAssistantText(json) || JSON.stringify(json);
         appendStreamText(content);
       }
     } catch (err: any) {
@@ -131,8 +314,52 @@ export function ChatScreen() {
     }
   };
 
+  const handleExportPresentation = async () => {
+    if (isExporting || isStreaming) return;
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim());
+    if (!lastAssistant) {
+      Alert.alert('Exportación', 'Primero genera una respuesta en el chat para poder exportarla.');
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+      const result = await apiClient.exportPresentation(
+        lastAssistant.content,
+        'Presentación IA móvil',
+        ['html']
+      );
+      if (!result.ok || !result.artifact) {
+        throw new Error(result.error || 'No se pudo exportar la presentación');
+      }
+
+      const files = result.artifact.files || {};
+      const preferred = files.html?.public_url || files.html?.url;
+      const target = preferred
+        ? (preferred.startsWith('http') ? preferred : `${apiClient.getBaseUrl()}${preferred}`)
+        : null;
+
+      if (target) {
+        Alert.alert('Exportación lista', 'Se generó la presentación. Se abrirá el archivo.');
+        await Linking.openURL(target);
+      } else {
+        Alert.alert('Exportación lista', 'Presentación generada, pero sin URL de archivo disponible.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error exportando', err?.message || 'Error desconocido');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
+    const content = isUser ? item.content : formatForMobile(item.content);
+    const table = isUser ? null : parseMarkdownTable(content);
+    const tableKpis = table ? buildKpisFromTable(table) : [];
+    const metrics = isUser ? [] : (table ? buildSeriesFromTable(table) : parseMetrics(content));
+    const metricMax = metrics.length ? Math.max(...metrics.map((m) => m.value), 1) : 1;
+    const cleanedContent = isUser ? content : cleanChartArtifacts(content);
     return (
       <View
         style={[
@@ -162,8 +389,76 @@ export function ChatScreen() {
           ]}
           selectable
         >
-          {item.content}
+          {cleanedContent}
         </Text>
+        {!isUser && metrics.length >= 2 && (
+          <View style={styles.metricWrap}>
+            {metrics.slice(0, 8).map((metric, metricIndex) => (
+              <View key={`${metric.label}-${metricIndex}`} style={styles.metricRow}>
+                <Text style={[styles.metricLabel, { color: theme.colors.textPrimary }]}>
+                  {metric.label}
+                </Text>
+                <View
+                  style={[
+                    styles.metricBarBg,
+                    { backgroundColor: theme.colors.bgSecondary, borderColor: theme.colors.border },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.metricBarFill,
+                      {
+                        backgroundColor: theme.colors.accentBlue,
+                        width: `${Math.max(4, (metric.value / metricMax) * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={[styles.metricValue, { color: theme.colors.textMuted }]}>
+                  {Number.isInteger(metric.value) ? metric.value : metric.value.toFixed(1)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        {!isUser && tableKpis.length > 0 && (
+          <View style={styles.kpiWrap}>
+            {tableKpis.map((kpi, kpiIdx) => (
+              <View
+                key={`${kpi.label}-${kpiIdx}`}
+                style={[
+                  styles.kpiCard,
+                  { backgroundColor: theme.colors.bgSecondary, borderColor: theme.colors.border },
+                ]}
+              >
+                <Text style={[styles.kpiLabel, { color: theme.colors.textMuted }]}>{kpi.label}</Text>
+                <Text style={[styles.kpiValue, { color: theme.colors.textPrimary }]}>
+                  {Number.isInteger(kpi.value) ? kpi.value : kpi.value.toFixed(1)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        {!isUser && table && (
+          <View style={[styles.tableWrap, { borderColor: theme.colors.border }]}>
+            <View style={[styles.tableRow, styles.tableHeader, { backgroundColor: theme.colors.bgSecondary }]}>
+              {table.headers.slice(0, 4).map((h, i) => (
+                <Text key={`h-${i}`} style={[styles.tableCell, styles.tableHeadText, { color: theme.colors.textPrimary }]}>
+                  {h}
+                </Text>
+              ))}
+            </View>
+            {table.rows.slice(0, 6).map((r, ridx) => (
+              <View key={`r-${ridx}`} style={[styles.tableRow, ridx % 2 === 1 && { backgroundColor: theme.colors.bgSecondary }]}>
+                {r.slice(0, 4).map((c, cidx) => (
+                  <Text key={`c-${ridx}-${cidx}`} style={[styles.tableCell, { color: theme.colors.textPrimary }]}>
+                    {c}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        )}
         {item.timestamp && (
           <Text
             style={[
@@ -253,7 +548,36 @@ export function ChatScreen() {
             ⚡ Rápido
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.modeBtn,
+            mode === 'presentacion' && {
+              backgroundColor: theme.colors.accentPurple,
+            },
+          ]}
+          onPress={() => setMode('presentacion')}
+        >
+          <Text
+            style={[
+              styles.modeBtnText,
+              {
+                color: mode === 'presentacion' ? '#fff' : theme.colors.textMuted,
+              },
+            ]}
+          >
+            📽️ Presentación
+          </Text>
+        </TouchableOpacity>
         <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          onPress={handleExportPresentation}
+          style={styles.clearBtn}
+          disabled={isExporting || isStreaming}
+        >
+          <Text style={[styles.clearBtnText, { color: theme.colors.textMuted }]}>
+            {isExporting ? '⏳' : '⬇️'}
+          </Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={clearChat} style={styles.clearBtn}>
           <Text style={[styles.clearBtnText, { color: theme.colors.textMuted }]}>
             🗑️
@@ -355,15 +679,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    gap: 8,
+    gap: 6,
   },
   modeBtn: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
   },
   modeBtnText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   clearBtn: {
@@ -378,10 +702,11 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   messageBubble: {
-    maxWidth: '82%',
+    maxWidth: '90%',
     padding: 14,
     borderRadius: 18,
     marginBottom: 10,
+    overflow: 'hidden',
   },
   userBubble: {
     alignSelf: 'flex-end',
@@ -397,13 +722,81 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   messageText: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'left',
+    flexShrink: 1,
+    letterSpacing: 0.1,
   },
   messageTime: {
     fontSize: 10,
     marginTop: 6,
     textAlign: 'right',
+  },
+  metricWrap: {
+    marginTop: 10,
+    gap: 8,
+  },
+  metricRow: {
+    gap: 4,
+  },
+  metricLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  metricBarBg: {
+    height: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  metricBarFill: {
+    height: '100%',
+    borderRadius: 6,
+  },
+  metricValue: {
+    fontSize: 11,
+    textAlign: 'right',
+  },
+  kpiWrap: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  kpiCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 8,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    marginBottom: 4,
+  },
+  kpiValue: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  tableWrap: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  tableHeader: {
+    borderBottomWidth: 1,
+  },
+  tableRow: {
+    flexDirection: 'row',
+  },
+  tableCell: {
+    flex: 1,
+    fontSize: 11,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+  },
+  tableHeadText: {
+    fontWeight: '700',
   },
   emptyChat: {
     flex: 1,

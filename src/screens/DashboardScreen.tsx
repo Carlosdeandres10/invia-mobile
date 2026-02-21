@@ -31,7 +31,12 @@ export function DashboardScreen() {
     try {
       setError(null);
       const status = await apiClient.getApiStatus();
-      setApis(status.apis || []);
+      const normalizedApis = Array.isArray(status?.apis)
+        ? status.apis
+        : Array.isArray(status)
+          ? status
+          : [];
+      setApis(normalizedApis);
     } catch (err: any) {
       setError(err?.message || 'Error de conexión');
     } finally {
